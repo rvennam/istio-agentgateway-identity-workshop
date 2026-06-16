@@ -1,0 +1,68 @@
+# Part 4 infrastructure: an egress gateway (agentgateway as an egress waypoint) and a meshed
+# client that calls an external, non-mesh host through it. The SourceDelegation policy that makes
+# the egress gateway forward the WIT is applied in the README (so the before/after is visible).
+#
+# common-infrastructure holds the shared egress gateway; egress-client holds the workload.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: common-infrastructure
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: egress-client
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+# the egress gateway: an agentgateway waypoint that intercepts mesh egress (HBONE on 15008)
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: egress-gateway
+  namespace: common-infrastructure
+spec:
+  gatewayClassName: enterprise-agentgateway-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trading-app
+  namespace: egress-client
+---
+# a meshed payments app carrying the same attested claims as Part 3's EU tenant
+# (zone=PCI-DSS, jurisdiction=eu). These ride out of the mesh inside the WIT.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-app
+  namespace: egress-client
+  labels:
+    app: trading-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trading-app
+  template:
+    metadata:
+      labels:
+        app: trading-app
+      annotations:
+        solo.io.security-claims/jurisdiction: "eu"
+        solo.io.security-claims/zone: "PCI-DSS"
+    spec:
+      serviceAccountName: trading-app
+      containers:
+      - name: curl
+        image: curlimages/curl:8.10.1
+        command:
+        - sleep
+        - infinity

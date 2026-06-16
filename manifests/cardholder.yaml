@@ -1,0 +1,31 @@
+# PCI cardholder-data service (on cluster1). Plain k8s. (It is the protected service; policy checks the CALLER claims, so cardholder carries none.)
+# Note: NOT global here — Part 1 labels it global at runtime to show multicluster-by-label.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: cardholder, namespace: tenant-payments }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cardholder, namespace: tenant-payments, labels: { app: cardholder } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cardholder } }
+  template:
+    metadata:
+      labels: { app: cardholder }
+    spec:
+      serviceAccountName: cardholder
+      containers:
+      - name: httpbin
+        image: ghcr.io/mccutchen/go-httpbin:v2.15.0
+        ports: [ { containerPort: 8080 } ]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cardholder
+  namespace: tenant-payments
+  labels: { app: cardholder }
+spec:
+  selector: { app: cardholder }
+  ports: [ { name: http, port: 8000, targetPort: 8080 } ]

@@ -1,0 +1,110 @@
+# Tenant clients (on cluster2). payments-api-eu and payments-api-hk share ONE service
+# account (payments-api) -> identical SPIFFE id. zone claim set here; jurisdiction is
+# applied separately via kubectl in the notebook (so the tagging is visible).
+# Namespaces are declared here (ambient-enrolled) so no imperative loop is needed.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-payments
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-analytics
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: payments-api
+  namespace: tenant-payments
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api-eu
+  namespace: tenant-payments
+  labels:
+    app: payments-api-eu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api-eu
+  template:
+    metadata:
+      labels:
+        app: payments-api-eu
+      annotations:
+        solo.io.security-claims/zone: "PCI-DSS"
+    spec:
+      serviceAccountName: payments-api
+      containers:
+      - name: curl
+        image: curlimages/curl:8.10.1
+        command:
+        - sleep
+        - infinity
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api-hk
+  namespace: tenant-payments
+  labels:
+    app: payments-api-hk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api-hk
+  template:
+    metadata:
+      labels:
+        app: payments-api-hk
+      annotations:
+        solo.io.security-claims/zone: "PCI-DSS"
+    spec:
+      serviceAccountName: payments-api
+      containers:
+      - name: curl
+        image: curlimages/curl:8.10.1
+        command:
+        - sleep
+        - infinity
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reporting
+  namespace: tenant-analytics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reporting
+  namespace: tenant-analytics
+  labels:
+    app: reporting
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reporting
+  template:
+    metadata:
+      labels:
+        app: reporting
+      annotations:
+        solo.io.security-claims/zone: "general"
+    spec:
+      serviceAccountName: reporting
+      containers:
+      - name: curl
+        image: curlimages/curl:8.10.1
+        command:
+        - sleep
+        - infinity

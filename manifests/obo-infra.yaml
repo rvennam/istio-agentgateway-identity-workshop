@@ -1,0 +1,164 @@
+# Part 5 infrastructure: a mock IdP (publishes JWKS), a protected upstream behind an
+# agentgateway waypoint that requires an STS-issued (OBO) token, and the STS JWKS backend.
+# The IdP keypair + JWKS ConfigMap, the agent identities, and workloadClaims are created by
+# scripts/setup-obo.sh.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tokenexchange-test
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+# mock IdP — nginx serving the demo JWKS at /.well-known/jwks.json (from the jwks-content ConfigMap)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-idp
+  namespace: tokenexchange-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-idp
+  template:
+    metadata:
+      labels:
+        app: mock-idp
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: jwks
+          mountPath: /usr/share/nginx/html/.well-known/jwks.json
+          subPath: jwks.json
+      volumes:
+      - name: jwks
+        configMap:
+          name: jwks-content
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-idp
+  namespace: tokenexchange-test
+spec:
+  selector:
+    app: mock-idp
+  ports:
+  - port: 80
+    targetPort: 80
+---
+# protected upstream — go-httpbin (echoes request headers)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-upstream
+  namespace: tokenexchange-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-upstream
+  template:
+    metadata:
+      labels:
+        app: mock-upstream
+    spec:
+      containers:
+      - name: httpbin
+        image: mccutchen/go-httpbin:v2.15.0
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-upstream
+  namespace: tokenexchange-test
+  labels:
+    istio.io/use-waypoint: tx-wp   # route this service through the tx-wp agentgateway waypoint
+spec:
+  selector:
+    app: mock-upstream
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    appProtocol: http
+---
+# agentgateway waypoint in front of mock-upstream
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tx-wp
+  namespace: tokenexchange-test
+spec:
+  gatewayClassName: enterprise-agentgateway-waypoint
+  listeners:
+  - name: mesh
+    port: 15088
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: upstream-route
+  namespace: tokenexchange-test
+spec:
+  parentRefs:
+  - group: ""
+    kind: Service
+    name: mock-upstream
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - group: ""
+      kind: Service
+      name: mock-upstream
+      port: 80
+---
+# the agentgateway STS publishes its signing keys at :7777/.well-known/jwks.json
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: sts-jwks
+  namespace: tokenexchange-test
+spec:
+  static:
+    host: enterprise-agentgateway.agentgateway-system.svc.cluster.local
+    port: 7777
+---
+# require a valid STS-issued (OBO) token to reach mock-upstream
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: require-obo
+  namespace: tokenexchange-test
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: tx-wp
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: enterprise-agentgateway.agentgateway-system.svc.cluster.local:7777
+        jwks:
+          remote:
+            backendRef:
+              group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: sts-jwks
+              namespace: tokenexchange-test
+            cacheDuration: 5m
+            jwksPath: .well-known/jwks.json
