@@ -597,6 +597,14 @@ user=alice@example.com role=cardholder-reader agent=rogue-agent -> HTTP 403
 
 ---
 
+## Visualizing the mesh
+
+Everything above is observable in the **Solo Enterprise for Istio** UI — the two clusters, the cross-cluster `cardholder` call, the agents, and the egress path, all on one graph:
+
+![Workshop topology in the Solo Enterprise for Istio UI](images/topology.png)
+
+---
+
 ## Cleanup
 
 ```bash
